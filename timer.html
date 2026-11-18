@@ -27,6 +27,7 @@
   .controls { display:flex; flex-wrap:wrap; gap:4px; max-width:100%; justify-content:center; transition:opacity .3s; }
   body.laeuft .controls { opacity:0; }
   body.laeuft:hover .controls { opacity:1; }
+  body.praesentation .controls { display:none; }
   button { font:inherit; font-size:12px; border:none; border-radius:999px; padding:.45em .95em; cursor:pointer;
     background:var(--track); color:var(--text); }
   button.aktiv { background:var(--main); color:var(--bg); font-weight:700; }
@@ -196,8 +197,24 @@
   if (window.ResizeObserver) new ResizeObserver(layout).observe(document.body);
 
   function init() { laden(); rest = state.minuten * 60; zeichnen(); layout(); }
+  // ---------- Präsentationsmodus erkennen: Leiste ausblenden ----------
+  function setzeAnsicht(view) {
+    document.body.classList.toggle('praesentation', view === 'read');
+    layout();
+  }
+  function ansichtBeobachten() {
+    try {
+      const doc = Office.context.document;
+      if (doc.getActiveViewAsync) doc.getActiveViewAsync(function (r) {
+        if (r.status === Office.AsyncResultStatus.Succeeded) setzeAnsicht(r.value);
+      });
+      if (doc.addHandlerAsync && Office.EventType.ActiveViewChanged)
+        doc.addHandlerAsync(Office.EventType.ActiveViewChanged, function (e) { setzeAnsicht(e.activeView); });
+    } catch (e) {}
+  }
+
   if (window.Office && Office.onReady) {
-    Office.onReady(function (info) { officeBereit = !!(info && info.host); init(); });
+    Office.onReady(function (info) { officeBereit = !!(info && info.host); init(); if (officeBereit) ansichtBeobachten(); });
   } else { init(); }
   init();
 })();
