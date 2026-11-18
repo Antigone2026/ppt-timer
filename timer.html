@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Unterrichts-Timer</title>
+<script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+<style>
+  :root { --main:#3D2C5E; --accent:#F2B134; --bg:#FFFFFF; --text:#3D2C5E; --track:#EEEAF6; --done:#C0392B; }
+  body.dunkel { --bg:#3D2C5E; --text:#FFFFFF; --track:#5A4880; --main:#F2B134; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--text);
+    font-family: Calibri, "Segoe UI", -apple-system, Helvetica, Arial, sans-serif; overflow:hidden; user-select:none; }
+  .wrap { height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3vmin; padding:2vmin; }
+  .ring { position:relative; width:min(78vmin, 70vh); aspect-ratio:1; cursor:pointer; flex:0 1 auto; }
+  .ring svg { width:100%; height:100%; transform:rotate(-90deg); }
+  .ring circle { fill:none; stroke-width:9; }
+  .track { stroke:var(--track); }
+  .bar { stroke:var(--main); stroke-linecap:round; transition: stroke-dashoffset .9s linear, stroke .3s; }
+  .ring.bald .bar { stroke:var(--accent); }
+  .ring.aus .bar { stroke:var(--done); }
+  .zeit { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+  .digits { font-size:min(20vmin, 18vh); font-weight:700; font-variant-numeric:tabular-nums; line-height:1; }
+  .hint { font-size:min(4.2vmin, 4vh); opacity:.75; margin-top:1.5vmin; text-align:center; padding:0 12%; }
+  .ring.aus .digits { color:var(--done); animation: puls 1s ease-in-out infinite; }
+  body.dunkel .ring.aus .digits { color:var(--accent); }
+  @keyframes puls { 50% { transform:scale(1.06); } }
+  .controls { display:flex; flex-wrap:wrap; gap:1.2vmin; justify-content:center; transition:opacity .3s; }
+  body.laeuft .controls { opacity:0; }
+  body.laeuft:hover .controls { opacity:1; }
+  button { font:inherit; font-size:min(3.6vmin, 3.4vh); border:none; border-radius:999px; padding:.45em .95em; cursor:pointer;
+    background:var(--track); color:var(--text); }
+  button.aktiv { background:var(--main); color:var(--bg); font-weight:700; }
+  body.dunkel button.aktiv { color:#3D2C5E; }
+  button.icon { min-width:2.3em; font-weight:700; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="ring" id="ring" title="Klicken: Start / Pause">
+    <svg viewBox="0 0 100 100">
+      <circle class="track" cx="50" cy="50" r="44"></circle>
+      <circle class="bar" id="bar" cx="50" cy="50" r="44"></circle>
+    </svg>
+    <div class="zeit">
+      <div class="digits" id="digits">10:00</div>
+      <div class="hint" id="hint">Klicken zum Starten</div>
+    </div>
+  </div>
+  <div class="controls" id="controls">
+    <span id="presets"></span>
+    <button class="icon" id="minus" title="1 Minute weniger">−</button>
+    <button class="icon" id="plus" title="1 Minute mehr">+</button>
+    <button id="reset" title="Zurücksetzen">↺</button>
+    <button id="ton" title="Ton am Ende an/aus">🔔</button>
+    <button id="design" title="Hell/Dunkel">◐</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  const PRESETS = [3, 5, 8, 10, 12, 15, 20];
+  const C = 2 * Math.PI * 44;
+  const $ = (id) => document.getElementById(id);
+  const bar = $('bar'), ring = $('ring'), digits = $('digits'), hint = $('hint');
+  bar.style.strokeDasharray = C;
+
+  let state = { minuten: 10, ton: true, dunkel: false };
+  let rest = 600, endZeit = null, tick = null, fertig = false;
+  let officeBereit = false;
+
+  // ---------- Speichern (pro Folie / pro eingefügtem Timer) ----------
+  function laden() {
+    try {
+      if (officeBereit && Office.context.document && Office.context.document.settings) {
+        const s = Office.context.document.settings.get('timer');
+        if (s) state = Object.assign(state, s);
+      }
+    } catch (e) {}
+  }
+  function speichern() {
+    try {
+      if (officeBereit && Office.context.document && Office.context.document.settings) {
+        Office.context.document.settings.set('timer', state);
+        Office.context.document.settings.saveAsync(function () {});
+      }
+    } catch (e) {}
+  }
+
+  // ---------- Anzeige ----------
+  function fmt(sek) {
+    sek = Math.max(0, Math.ceil(sek));
+    const m = Math.floor(sek / 60), s = sek % 60;
+    return m + ':' + String(s).padStart(2, '0');
+  }
+  function zeichnen() {
+    const gesamt = state.minuten * 60;
+    digits.textContent = fmt(rest);
+    const anteil = gesamt > 0 ? Math.max(0, rest) / gesamt : 0;
+    bar.style.strokeDashoffset = C * (1 - anteil);
+    ring.classList.toggle('bald', rest > 0 && rest <= 60 && gesamt > 60);
+    ring.classList.toggle('aus', fertig);
+    document.body.classList.toggle('dunkel', !!state.dunkel);
+    document.body.classList.toggle('laeuft', !!endZeit);
+    $('ton').style.opacity = state.ton ? 1 : .45;
+    if (fertig) hint.textContent = 'Die Zeit ist um!';
+    else if (endZeit) hint.textContent = 'läuft … (Klick = Pause)';
+    else if (rest < gesamt) hint.textContent = 'Pause – Klick zum Weitermachen';
+    else hint.textContent = 'Klicken zum Starten';
+    document.querySelectorAll('#presets button').forEach(b =>
+      b.classList.toggle('aktiv', Number(b.dataset.min) === state.minuten));
+  }
+
+  // ---------- Steuerung ----------
+  function start() {
+    if (fertig) { zuruecksetzen(); }
+    if (rest <= 0) return;
+    endZeit = Date.now() + rest * 1000;
+    tick = setInterval(schritt, 250);
+    schritt();
+  }
+  function pause() {
+    if (!endZeit) return;
+    rest = (endZeit - Date.now()) / 1000;
+    endZeit = null; clearInterval(tick); zeichnen();
+  }
+  function schritt() {
+    rest = (endZeit - Date.now()) / 1000;
+    if (rest <= 0) {
+      rest = 0; endZeit = null; clearInterval(tick); fertig = true;
+      if (state.ton) gong();
+    }
+    zeichnen();
+  }
+  function zuruecksetzen() {
+    endZeit = null; clearInterval(tick); fertig = false;
+    rest = state.minuten * 60; zeichnen();
+  }
+  function setzeMinuten(m) {
+    state.minuten = Math.min(90, Math.max(1, m));
+    speichern(); zuruecksetzen();
+  }
+
+  // sanfter Gong (Web Audio, keine Datei nötig)
+  let ctx = null;
+  function gong() {
+    try {
+      ctx = ctx || new (window.AudioContext || window.webkitAudioContext)();
+      [0, 0.9, 1.8].forEach((t, i) => {
+        const o = ctx.createOscillator(), g = ctx.createGain();
+        o.type = 'sine'; o.frequency.value = [660, 523, 440][i];
+        g.gain.setValueAtTime(0.0001, ctx.currentTime + t);
+        g.gain.exponentialRampToValueAtTime(0.35, ctx.currentTime + t + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + t + 1.4);
+        o.connect(g).connect(ctx.destination);
+        o.start(ctx.currentTime + t); o.stop(ctx.currentTime + t + 1.5);
+      });
+    } catch (e) {}
+  }
+
+  // ---------- Buttons ----------
+  const pr = $('presets');
+  PRESETS.forEach(m => {
+    const b = document.createElement('button');
+    b.textContent = m + "′"; b.dataset.min = m; b.title = m + ' Minuten';
+    b.style.marginRight = '1.2vmin';
+    b.onclick = () => setzeMinuten(m);
+    pr.appendChild(b);
+  });
+  ring.onclick = () => {
+    // Audio auf Apple-Geräten erst nach einer Nutzeraktion erlaubt
+    try { ctx = ctx || new (window.AudioContext || window.webkitAudioContext)(); ctx.resume && ctx.resume(); } catch (e) {}
+    endZeit ? pause() : start();
+  };
+  $('plus').onclick = () => setzeMinuten(state.minuten + 1);
+  $('minus').onclick = () => setzeMinuten(state.minuten - 1);
+  $('reset').onclick = zuruecksetzen;
+  $('ton').onclick = () => { state.ton = !state.ton; speichern(); zeichnen(); };
+  $('design').onclick = () => { state.dunkel = !state.dunkel; speichern(); zeichnen(); };
+  document.addEventListener('keydown', (e) => {
+    if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); ring.onclick(); }
+    if (e.key === 'r' || e.key === 'R') zuruecksetzen();
+  });
+
+  function init() { laden(); rest = state.minuten * 60; zeichnen(); }
+  if (window.Office && Office.onReady) {
+    Office.onReady(function (info) { officeBereit = !!(info && info.host); init(); });
+  } else { init(); }
+  init();
+})();
+</script>
+</body>
+</html>
